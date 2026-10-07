@@ -43,6 +43,11 @@ h1 span{color:var(--gold)}
 .link{background:none;color:var(--muted);text-decoration:underline;font-size:14px;padding:6px}
 .row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 
+.cov-row{margin:10px 0}.cov-row .row{font-size:16px;margin-bottom:4px}
+.stack{display:flex;height:16px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,.15)}
+.stack i{display:block;height:100%}.s-ok{background:var(--green)}.s-shaky{background:#ff9f43}
+.legend{font-size:14px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap;margin-top:6px}
+.weak{margin:10px 0 0;padding-left:20px;font-size:16px;color:var(--muted)}
 /* game */
 .hud{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:6px}
 .pill{background:rgba(0,0,0,.3);padding:6px 12px;border-radius:99px;font-weight:bold;white-space:nowrap}
@@ -152,7 +157,12 @@ canvas#fx{position:fixed;inset:0;pointer-events:none;z-index:40}
 
   <button class="go" id="startBtn">START MISSION!</button>
 
-  <div class="card" style="margin-top:22px"><h3>Badges</h3><div class="badges" id="badges"></div></div>
+  <div class="card" style="margin-top:22px"><h3>Coverage</h3>
+    <div id="cov"></div>
+    <button class="go" id="studyBtn" style="font-size:20px;padding:12px;margin-top:12px;background:linear-gradient(#4dabf7,#1d6fb8);box-shadow:0 6px 0 #12497a">🎯 Study next: new &amp; shaky only</button>
+  </div>
+
+  <div class="card"><h3>Badges</h3><div class="badges" id="badges"></div></div>
   <div class="row"><small style="color:var(--muted)" id="statsLine"></small><button class="link" id="resetBtn">reset progress</button></div>
 </div>
 
@@ -377,7 +387,7 @@ function shuffle(a){const b=a.slice();for(let i=b.length-1;i>0;i--){const j=Math
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
 const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
 const KEY="clark-revolution-quest-v1";
-let S={xp:0,missions:0,best:0,seen:{},missed:{},badges:{},mute:false};
+let S={xp:0,missions:0,best:0,seen:{},missed:{},last:{},badges:{},mute:false};
 try{const r=JSON.parse(localStorage.getItem(KEY));if(r)S=Object.assign(S,r);}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 
@@ -436,8 +446,10 @@ function toast(t){const d=el("div","toast",t);document.body.append(d);setTimeout
 MC.forEach(i=>i.id="mc:"+i.q);TF.forEach(i=>i.id="tf:"+i.s);FB.forEach(i=>i.id="fb:"+i.s);
 
 function weight(id){return (1+1.5*(S.missed[id]||0))/(1+.6*(S.seen[id]||0));} // favors new + previously-missed
+let focusNow=false;
+const isUnseen=id=>!S.seen[id],isShaky=id=>S.seen[id]&&S.last[id]===0;
 function pickWeighted(items,topic,used){
-  const pool=items.filter(it=>(topic==="all"||it.t===topic)&&!used.has(it.id));
+  const pool=items.filter(it=>(topic==="all"||it.t===topic)&&!used.has(it.id)&&(!focusNow||isUnseen(it.id)||isShaky(it.id)));
   if(!pool.length)return null;
   let r=Math.random()*pool.reduce((s,it)=>s+weight(it.id),0);
   for(const it of pool){r-=weight(it.id);if(r<=0)return it;}
@@ -495,15 +507,17 @@ const GENS={
      cards,label:"Britain's actions vs. colonists' reactions"};}}
 };
 
-function buildQueue(len,topic){
-  const used=new Set(),out=[];let last=null,heavy=0,guard=0;const cap=Math.max(1,Math.ceil(len/3));
+function buildQueue(len,topic,focus){
+  focusNow=!!focus;
+  const used=new Set(),out=[];let last=null,heavy=0,guard=0,fails=0;const cap=Math.max(1,Math.ceil(len/3));
   while(out.length<len&&guard++<600){
-    const keys=Object.keys(GENS).filter(k=>k!==last&&!(GENS[k].heavy&&heavy>=cap));
+    const keys=Object.keys(GENS).filter(k=>k!==last&&!(GENS[k].heavy&&heavy>=cap)&&(!focus||["mc","tf","fill"].includes(k)));
     let r=Math.random()*keys.reduce((s,k)=>s+GENS[k].w,0),k=keys[0];
     for(const kk of keys){r-=GENS[kk].w;if(r<=0){k=kk;break;}}
-    const q=GENS[k].make(topic,used);if(!q)continue;
+    const q=GENS[k].make(topic,used);if(!q){if(++fails>8)last=null;continue;}
     used.add(q.id);out.push(q);last=k;if(GENS[k].heavy)heavy++;
   }
+  focusNow=false;
   return out;
 }
 
@@ -520,8 +534,25 @@ function renderHome(){
   else{$("#rankBar").style.width="100%";$("#rankTxt").textContent=S.xp+" XP · MAX RANK!";}
   $("#badges").innerHTML="";
   Object.keys(BADGES).forEach(k=>{const b=el("div","badge"+(S.badges[k]?"":" locked"),BADGES[k].i+" "+BADGES[k].n);b.title=BADGES[k].d;$("#badges").append(b);});
+  renderCoverage();
   $("#statsLine").textContent="Missions: "+S.missions+" · Best streak: "+S.best;
   syncMute();
+}
+function renderCoverage(){
+  const groups=[["Everything",()=>true],["📜 Acts & Taxes",i=>i.t==="acts"],["⚔️ War & People",i=>i.t==="war"]];
+  const ALL=[...MC,...TF,...FB],box=$("#cov");box.innerHTML="";
+  groups.forEach(([name,f])=>{
+    const items=ALL.filter(f),n=items.length;
+    const ok=items.filter(i=>S.seen[i.id]&&S.last[i.id]===1).length,sh=items.filter(i=>isShaky(i.id)).length,seen=ok+sh;
+    const r=el("div","cov-row"),top=el("div","row");
+    top.append(el("b","",name),el("span","",seen+" of "+n+" seen · "+ok+" solid"));
+    const st=el("div","stack"),a=el("i","s-ok"),b=el("i","s-shaky");
+    a.style.width=ok/n*100+"%";b.style.width=sh/n*100+"%";st.append(a,b);r.append(top,st);box.append(r);
+  });
+  const lg=el("div","legend");lg.innerHTML="<span>🟩 got it last time</span><span>🟧 shaky (missed last time)</span><span>⬜ not seen yet</span>";box.append(lg);
+  const weak=ALL.filter(i=>isShaky(i.id)).sort((a,b)=>(S.missed[b.id]||0)-(S.missed[a.id]||0)).slice(0,5);
+  if(weak.length){box.append(el("div","",""));const h=el("div","","Shaky right now:");h.style.cssText="margin-top:12px;font-weight:bold";box.append(h);
+    const ul=el("ul","weak");weak.forEach(i=>ul.append(el("li","",(i.q||i.s).replace("___","____")+" (missed "+(S.missed[i.id]||0)+"×)")));box.append(ul);}
 }
 function segBind(id,key){
   $(id).onclick=e=>{const b=e.target.closest("button");if(!b)return;
@@ -531,7 +562,8 @@ function segBind(id,key){
 segBind("#lenSeg","len");segBind("#topicSeg","topic");
 
 function startMission(){
-  const queue=buildQueue(sel.len,sel.topic);
+  const queue=buildQueue(sel.len,sel.topic,sel.focus);
+  if(!queue.length){toast("🎉 Nothing left to study here! Try another topic.");renderHome();show("home");return;}
   M={len:queue.length,queue,cur:null,idx:0,xp:0,streak:0,best:0,correct:0,firstTry:0,rally:[],wrong:[],hints:2,
      locked:false,hinted:false,keys:{},status:[],newBadges:[],rallyMode:false,startRank:rankOf(S.xp),sawOrderOk:false};
   show("game");updateHud();next();
@@ -687,7 +719,7 @@ R.sort=function(q,st){
 
 function resolve(ok,ex){
   if(M.locked)return;M.locked=true;const q=M.cur;
-  if(!q.noStat){S.seen[q.id]=(S.seen[q.id]||0)+1;if(!ok)S.missed[q.id]=(S.missed[q.id]||0)+1;}
+  if(!q.noStat){S.seen[q.id]=(S.seen[q.id]||0)+1;S.last[q.id]=ok?1:0;if(!ok)S.missed[q.id]=(S.missed[q.id]||0)+1;}
   let gain;
   const fb=$("#fb");
   if(ok){
@@ -740,12 +772,13 @@ function finish(){
 }
 
 /* wiring */
-$("#startBtn").onclick=startMission;
-$("#againBtn").onclick=startMission;
+$("#startBtn").onclick=()=>{sel.focus=false;startMission();};
+$("#studyBtn").onclick=()=>{sel.focus=true;startMission();};
+$("#againBtn").onclick=()=>startMission();
 $("#homeBtn").onclick=()=>{renderHome();show("home");};
 $("#quitBtn").onclick=()=>{if(confirm("Leave this mission? Your XP from it won't be saved."))  {$("#fb").classList.add("hidden");renderHome();show("home");}};
 $("#muteH").onclick=$("#muteG").onclick=toggleMute;
-$("#resetBtn").onclick=()=>{if(confirm("Erase all XP, badges and history?")){S={xp:0,missions:0,best:0,seen:{},missed:{},badges:{},mute:S.mute};save();renderHome();}};
+$("#resetBtn").onclick=()=>{if(confirm("Erase all XP, badges and history?")){S={xp:0,missions:0,best:0,seen:{},missed:{},last:{},badges:{},mute:S.mute};save();renderHome();}};
 addEventListener("keydown",e=>{
   if($("#game").classList.contains("hidden")||!M)return;
   if(!$("#fb").classList.contains("hidden")){if(e.key==="Enter"||e.key===" "){e.preventDefault();next();}return;}

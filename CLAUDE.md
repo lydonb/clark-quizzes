@@ -33,3 +33,14 @@ The user supplies photos of notes, study guides and textbook pages. Read them cl
 
 ## Accuracy
 Kids' notes often contain mistakes. When the notes are wrong or ambiguous, teach the correct fact and tell the user which items differ so they can check against the teacher's material. Don't silently "fix" the teacher's numbers (e.g. years printed on the study guide).
+
+## Coverage panel
+The home screen shows how much of the fixed question bank (`MC`/`TF`/`FB`) he has seen and answered correctly last time, per topic, plus a "Study next" mission of unseen/shaky questions only. It uses `S.seen`, `S.last` and `S.missed` (keyed by question id). Random-set types (order, match, sort, clue, year, first) have `noStat` and are not counted. Keep this when cloning for a new subject; progress is per-browser.
+
+## Notes and gotchas
+- **Public site:** the repo is public (free GitHub Pages needs that). Never put the kid's full name, school, photos of his notes or other personal info in any file.
+- **Shared storage:** all quizzes share one origin, so every quiz needs a unique `KEY`. Bump the version suffix (`-v2`) if you change the saved-data shape in a way old data would break.
+- **Fixed-bank ids:** coverage tracking keys on the question text (`"mc:"+q`, `"tf:"+s`, `"fb:"+s`). Rewording a question resets its history; that's fine, just know it.
+- **Testing:** the browser pane may block localStorage on some URLs (the game wraps storage in try/catch, so it still runs). Drive a mission through the DOM with `javascript_exec`, e.g. set `sel={len:10,topic:"all",focus:false}; startMission()` and click through, rather than eyeballing it. Check `buildQueue(16, topic)` returns 16 questions for every topic.
+- **Known judgment calls in american-revolution/:** Navigation Acts year is 1650 (his study guide; historians often say 1651), and von Steuben is described as Prussian although his sheet says French. Follow the teacher's materials if the user says they differ.
+- **Git:** commit and push only when asked. End commit messages with the Co-Authored-By line from the session's attribution reminder. Pages redeploys within a minute or two of pushing `main`.
